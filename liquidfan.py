@@ -4,6 +4,8 @@ from liquidctl import find_liquidctl_devices
 import time
 import os
 import logging
+import signal
+import sys
 
 # List of points on fan curve
 # (temperature, fan percentage)
@@ -13,6 +15,8 @@ FAN_CONFIGS = [
     [(20, 0), (27, 0), (27, 30), (30, 30), (30, 40), (60, 100)] # Top fans
 ]
 
+LOG_FILE_LOC = os.path.relpath("/var/log/liquidfan.log")
+
 PWM_ROOT_FOLDER = r"/sys/devices/platform/it87.2624/hwmon/"
 PWM_FILE_NAMES = ["pwm2", "pwm3"]
 
@@ -20,11 +24,15 @@ def get_pwm_folder(root_folder=PWM_ROOT_FOLDER):
     files = os.listdir(root_folder)
     return os.path.join(root_folder, files[0])
 
-def write_manual_control_bit(pwm_folder, pwm_file_name):
-    with open(os.path.join(pwm_folder, pwm_file_name+"_enable"), "w") as enable_file:
-        enable_file.write("1")
+PWM_FOLDER = get_pwm_folder()
 
-    logging.info("Set manual control bit to '1' for {%s}", pwm_file_name)
+
+
+def write_manual_control_bit(pwm_file_name, bit_value, pwm_folder=PWM_FOLDER):
+    with open(os.path.join(pwm_folder, pwm_file_name+"_enable"), "w") as enable_file:
+        enable_file.write(str(bit_value))
+
+    logging.info("Set manual control bit to '1' for %s", pwm_file_name)
 
 # Returns the speed as a value between 0 and 1
 def get_speed_from_curve(T, fan_config):
@@ -72,14 +80,26 @@ def set_fan_speed_from_temp(T, last, fan_config, pwm_file_loc):
     return speed
 
 
-if __name__ == "__main__":
-    logging.basicConfig(filename='example.log', encoding='utf-8', level=logging.DEBUG)
+# Clean up when exiting
+def on_exit(sig, frame):
+    logging.debug("RECIEVED SIGNAL: '%s', exiting.", sig)
+    for fan_name in PWM_FILE_NAMES:
+        write_manual_control_bit(fan_name, 0)
 
-    pwm_folder = get_pwm_folder()
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGINT, on_exit)
+    signal.signal(signal.SIGTERM, on_exit)
+    signal.signal(signal.SIGQUIT, on_exit)
+
+
+    logging.basicConfig(filename=LOG_FILE_LOC, encoding='utf-8', level=logging.DEBUG)
 
     # Enable manual control for each fan
     for fan_name in PWM_FILE_NAMES:
-        write_manual_control_bit(pwm_folder, fan_name)
+        write_manual_control_bit(fan_name, 1)
 
     nzxt_device = None
 
@@ -100,6 +120,7 @@ if __name__ == "__main__":
         logging.debug("Init status: %s", init_status)
 
         last_values = [None for _i in range(len(FAN_CONFIGS))]
+
         while True:
             status = con.get_status()
             logging.debug("Status: %s", status)
@@ -109,8 +130,9 @@ if __name__ == "__main__":
 
             # update fans
             for i in range(len(FAN_CONFIGS)):
-                last_values[i] = set_fan_speed_from_temp(liq_temp, last_values[i], FAN_CONFIGS[i], os.path.join(pwm_folder, PWM_FILE_NAMES[i]))
+                last_values[i] = set_fan_speed_from_temp(liq_temp, last_values[i], FAN_CONFIGS[i], os.path.join(PWM_FOLDER, PWM_FILE_NAMES[i]))
                 logging.info("Speed for fan header index %d: %d", i, last_values[i])
 
             time.sleep(1)
-        
+
+    # DISABLE MANUAL FAN CONTROL AFTER EXIT REQUEST
