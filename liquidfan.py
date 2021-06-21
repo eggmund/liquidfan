@@ -2,6 +2,7 @@
 
 from liquidctl import find_liquidctl_devices
 import time
+import os
 
 # List of points on fan curve
 # (temperature, fan percentage)
@@ -11,8 +12,12 @@ FAN_CONFIGS = [
     [(20, 0), (27, 0), (27, 30), (30, 30), (30, 40), (60, 100)] # Top fans
 ]
 
-PWM_FILE_LOCS = [r"/sys/class/hwmon/hwmon4/pwm2", r"/sys/class/hwmon/hwmon4/pwm3"]
+PWM_ROOT_FOLDER = r"/sys/devices/platform/it87.2624/hwmon/"
+PWM_FILE_NAMES = ["pwm2", "pwm3"]
 
+def get_pwm_folder(root_folder=PWM_ROOT_FOLDER):
+    files = os.listdir(root_folder)
+    return os.path.join(root_folder, files[0])
 
 
 # Returns the speed as a value between 0 and 1
@@ -63,6 +68,8 @@ def set_fan_speed_from_temp(T, last, fan_config, pwm_file_loc):
 
 
 if __name__ == "__main__":
+    pwm_folder = get_pwm_folder()
+
     nzxt_device = None
 
     for dev in find_liquidctl_devices():
@@ -91,7 +98,7 @@ if __name__ == "__main__":
 
             # update fans
             for i in range(len(FAN_CONFIGS)):
-                last_values[i] = set_fan_speed_from_temp(liq_temp, last_values[i], FAN_CONFIGS[i], PWM_FILE_LOCS[i])
+                last_values[i] = set_fan_speed_from_temp(liq_temp, last_values[i], FAN_CONFIGS[i], os.path.join(pwm_folder, PWM_FILE_NAMES[i]))
                 print("Speed for fan %d: %d" % (i, last_values[i]))
 
             time.sleep(1)
